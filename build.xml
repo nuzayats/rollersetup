@@ -7,7 +7,7 @@ DESCRIPTION
     * Checkout the source tree from SVN
     * Install plugins
     * Install additional themes in roller-extras
-    * Enable security-constaint in web.xml
+    * Enable security-constraint in web.xml
     * Apply in-house patches
     * Build customized WAR package
     * Deploy WAR file to the container via ssh tunnel (currently supported only WildFly)
