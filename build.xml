@@ -217,7 +217,7 @@ NOTES
     
     <target name="checkout" depends="checkout.roller, checkout.extras"/>
     <target name="copy" depends="copy.extras.themes, copy.lib, copy.classes"/>
-    <target name="make" depends="enable-security-constraint, patch, mvn-clean-install, copy, mvn-war"/>
+    <target name="make" depends="patch, enable-security-constraint, mvn-clean-install, copy, mvn-war"/>
     
     
     <!-- Deployment targets. only WildFly is supported at the moment -->
