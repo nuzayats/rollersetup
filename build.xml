@@ -1,0 +1,288 @@
+<project name="rollersetup" basedir="." default="usage" xmlns:artifact="antlib:org.apache.maven.artifact.ant">
+    <target name="usage">
+        <echo>
+DESCRIPTION
+    This Ant script automates some supplemental installation tasks of Apache Roller such as:
+    
+    * Checkout the source tree from SVN
+    * Install plugins
+    * Install additional themes in roller-extras
+    * Enable security-constaint in web.xml
+    * Apply in-house patches
+    * Build customized WAR package
+    * Deploy WAR file to the container via ssh tunnel (currently supported only WildFly)
+    
+PREREQUISITES
+    This script tested on Apache Ant(TM) version 1.9.4, Mac OS X 10.9.5.
+    Deployment targets are tested against CentOS 6.5 server.
+    
+    You can easily gather dependent jars except svnant
+    Using pom.xml in the same directory to this script. see pom.xml for detail.
+    
+    This script depends on following packages.
+    Make sure that jar files of these packages are available in ~/.ant/lib or somewhere.
+        
+        * svnant (tested against 1.3.1) http://subclipse.tigris.org/svnant.html
+        * maven-ant-tasks (tested against 2.1.3) http://maven.apache.org/ant-tasks/
+        
+    To use deployment targets, following packages are also required.
+        
+        * cargo (tested against 1.4.12) http://cargo.codehaus.org/Downloads
+            * additional dependencies for Tomcat:
+                TODO: not implemented yet
+            * additional dependencies for WildFly:
+                * wildfly-controller-client (tested against 8.2.0.Final)
+    
+    Deployment targets assume following condition:
+    
+        * Place your ssh secret key in $HOME/.ssh/id_rsa with no passphrase
+        * The server is registered in $HOME/.ssh/known_hosts
+        * The container is registered as a service on the server
+        * The user who used to login the server allowed to execute "sudo service"
+    
+OPTIONS
+    -Dsvn.roller.url.target=[name_of_tag_or_branch]
+        Specify relative path of the repository for Roller. default is trunk.
+        See ${svn.roller.url.base} to check what tags or branches are available.
+    
+    -Denable.security-constraint=true
+        Enable (uncomment) security-constraint definition in web.xml.
+    
+    -Denable.extras-themes=true
+        Include additional themes in extras-themes.
+    
+    -Dssh.host=www.example.com
+        Hostname of the server which Roller is running.
+    
+    -Dssh.username=roller
+        Username of the server which Roller is running.
+    
+    -Dcontainer.username=roller
+        Username of the container.
+    
+    -Dcontainer.password=***
+        Password of the container.
+    
+TO APPLY PATCHES
+    Create a directory named "patch" in the same directory to this script.
+    Then put patch files into it.
+    The script automatically applies these patches against the workspace before start building.
+    NOTE: the "patch" command is required to apply patches.
+    
+TO INSTALL PLUGINS
+    Create a directory named "lib" or "classes" in the same directory to this script.
+    Then put jar files into "lib" directory. for class or property files use "classes" as well.
+    The script automatically copies these files into target directory before Maven produces final WAR file.
+    
+EXAMPLES
+    To checkout Roller release 5.1.1 and build roller.war:
+    
+        $ ant -Dsvn.roller.url.target=tags/roller_5.1.1 clean checkout make
+    
+    To do the same against trunk with enabling security-constraint:
+    
+        $ ant -Denable.security-constraint=true clean checkout make
+    
+    To undeploy Roller, stop the container, start the container, deploy Roller
+    
+        $ ant undeploy stop start deploy -Dssh.host=www.example.com -Dssh.username=roller -Dcontainer.username=roller -Dcontainer.password=roller
+        
+NOTES
+    As to following error, see https://jira.codehaus.org/browse/MANTTASKS-201
+        org.apache.tools.ant.ExitException: Permission ("java.lang.RuntimePermission" "exitVM") was not granted.
+        </echo>
+    </target>
+    
+    <typedef resource="org/tigris/subversion/svnant/svnantlib.xml"/>
+    
+    <property name="svn.roller.url.base" value="http://svn.apache.org/repos/asf/roller"/>
+    <property name="svn.extras.url.base" value="http://svn.codespot.com/a/apache-extras.org/roller-extras"/>
+    
+    <property name="svn.roller.url.target" value="trunk"/>
+    <property name="svn.extras.url.target" value="trunk"/>
+    
+    <property name="svn.roller.url" value="${svn.roller.url.base}/${svn.roller.url.target}"/>
+    <property name="svn.extras.url" value="${svn.extras.url.base}/${svn.extras.url.target}"/>
+    
+    <property name="svn.roller.revision" value="HEAD"/>
+    <property name="svn.extras.revision" value="HEAD"/>
+    
+    <property name="workspace" location="./workspace"/>
+    <property name="workspace.roller" location="${workspace}/roller"/>
+    <property name="workspace.roller.pom" location="${workspace.roller}/pom.xml"/>
+    <property name="workspace.roller.app" location="${workspace.roller}/app"/>
+    <property name="workspace.roller.app.pom" location="${workspace.roller.app}/pom.xml"/>
+    <property name="workspace.roller.app.web-inf.web.xml" location="${workspace.roller.app}/src/main/webapp/WEB-INF/web.xml"/>
+    <property name="workspace.extras" location="${workspace}/extras"/>
+    
+    <property name="src.lib" location="./lib"/>
+    <property name="src.classes" location="./classes"/>
+
+    <property name="patch.dir" location="patch"/>
+    <property name="patch.all" value="patch.all"/>
+    
+    <property name="target" location="${workspace.roller}/app/target"/>
+    <property name="target.war" location="${target}/roller.war"/>
+    
+    <property name="target.root" location="${target}/roller"/>
+    <property name="target.web-inf" location="${target.root}/WEB-INF"/>
+    <property name="target.web-inf.lib" location="${target.web-inf}/lib"/>
+    <property name="target.web-inf.classes" location="${target.web-inf}/classes"/>
+    
+    <property environment="env"/>
+    <property name="maven.home" value="${env.M2_HOME}"/>
+    
+    <property name="container.stop" value="sudo service wildfly stop"/>
+    <property name="container.start" value="sudo service wildfly start"/>
+    <property name="container.timeout" value="180000"/>
+    <property name="container.id" value="wildfly8x"/>
+    
+    <property name="ssh.tunnel.port.local" value="39990"/>
+    <property name="ssh.tunnel.port.remote" value="9990"/>
+    <property name="ssh.keyfile" value="${user.home}/.ssh/id_rsa"/>
+    
+    <svnSetting svnkit="true" javahl="false" id="svn.settings"/>
+    
+    <target name="clean">
+        <delete dir="${workspace}"/>
+        <delete file="${patch.all}"/>
+        <delete file="velocity.log"/>
+    </target>
+    
+    <target name="checkout.roller">
+        <echo>Checkout from ${svn.roller.url} ...</echo>
+        <svn refid="svn.settings">
+            <checkout revision="${svn.roller.revision}" url="${svn.roller.url}" destPath="${workspace.roller}" />
+        </svn>
+    </target>
+    
+    <target name="checkout.extras" if="enable.extras-themes">
+        <echo>Checkout from ${svn.extras.url} ...</echo>
+        <svn refid="svn.settings">
+            <checkout revision="${svn.extras.revision}" url="${svn.extras.url}" destPath="${workspace.extras}" />
+        </svn>
+    </target>
+    
+    <target name="copy.extras.themes" if="enable.extras-themes">
+        <copy todir="${target.root}">
+            <fileset dir="${workspace.extras}">
+                <include name="themes/**"/>
+            </fileset>
+        </copy>
+    </target>
+    
+    <target name="patch">
+        <concat destfile="${patch.all}">
+            <fileset dir="${patch.dir}">
+                <include name="*"/>
+            </fileset>
+        </concat>
+        <patch failonerror="true" patchfile="${patch.all}" dir="${workspace.roller}" strip="0"/>
+    </target>
+    
+    <target name="enable-security-constraint" if="enable.security-constraint">
+        <echo>enabling security-constraint in ${workspace.roller.app.web-inf.web.xml}</echo>
+        <replaceregexp file="${workspace.roller.app.web-inf.web.xml}"
+                       match="(?s)&lt;!--security-constraint&gt;(.+?)&lt;/security-constraint--&gt;"
+                       replace="&lt;security-constraint&gt;\1&lt;/security-constraint&gt;"/>
+    </target>
+    
+    <target name="mvn-clean-install">
+        <artifact:mvn pom="${workspace.roller}/pom.xml" mavenHome="${maven.home}">
+            <arg value="clean"/>
+            <arg value="install"/>
+        </artifact:mvn>
+    </target>
+    
+    <target name="copy.lib">
+        <copy todir="${target.web-inf.lib}">
+            <fileset dir="${src.lib}"/>
+        </copy>
+    </target>
+    
+    <target name="copy.classes">
+        <copy todir="${target.web-inf.classes}">
+            <fileset dir="${src.classes}">
+                <include name="**/**"/>
+            </fileset>
+        </copy>
+    </target>
+    
+    <target name="mvn-war">
+        <artifact:mvn pom="${workspace.roller.app.pom}" mavenHome="${maven.home}">
+            <arg value="war:war"/>
+        </artifact:mvn>
+        <echo>${target.war} was built</echo>
+    </target>
+    
+    <target name="checkout" depends="checkout.roller, checkout.extras"/>
+    <target name="copy" depends="copy.extras.themes, copy.lib, copy.classes"/>
+    <target name="make" depends="enable-security-constraint, patch, mvn-clean-install, copy, mvn-war"/>
+    
+    
+    <!-- Deployment targets. only WildFly is supported at the moment -->
+    
+    <macrodef name="my.cargo.remote">
+        <attribute name="action"/>
+        <sequential>
+            <fail unless="container.hostname"/>
+            <fail unless="container.port"/>
+            <fail unless="container.username"/>
+            <fail unless="container.password"/>
+            <taskdef resource="cargo.tasks"/>
+            <cargo containerId="${container.id}" action="@{action}" type="remote">
+                <configuration type="runtime">
+                    <property name="cargo.hostname"                   value="${container.hostname}"/>
+                    <property name="cargo.jboss.management-http.port" value="${container.port}"/>
+                    <property name="cargo.remote.username"            value="${container.username}"/>
+                    <property name="cargo.remote.password"            value="${container.password}"/>
+                    <property name="cargo.timeout"                    value="${container.timeout}"/>
+                    <deployable type="war" file="${target.war}"/>
+                </configuration>
+            </cargo>
+        </sequential>
+    </macrodef>
+    
+    <macrodef name="my.cargo.remote.ssh">
+        <attribute name="action"/>
+        <sequential>
+            <fail unless="ssh.host"/>
+            <fail unless="ssh.username"/>
+            <sshsession host="${ssh.host}" username="${ssh.username}" keyfile="${ssh.keyfile}"
+                        localtunnels="${ssh.tunnel.port.local}:localhost:${ssh.tunnel.port.remote}">
+                <sequential>
+                    <property name="container.hostname" value="localhost"/>
+                    <property name="container.port" value="${ssh.tunnel.port.local}"/>
+                    <my.cargo.remote action="@{action}"/>
+                </sequential>
+            </sshsession>
+        </sequential>
+    </macrodef>
+    
+    <target name="deploy">
+        <my.cargo.remote.ssh action="deploy"/>
+    </target>
+    
+    <target name="undeploy">
+        <my.cargo.remote.ssh action="undeploy"/>
+    </target>
+
+    <macrodef name="my.sshexec.usepty">
+        <attribute name="command"/>
+        <sequential>
+            <fail unless="ssh.host"/>
+            <fail unless="ssh.username"/>
+            <sshexec host="${ssh.host}" username="${ssh.username}" keyfile="${ssh.keyfile}" failonerror="true"
+                     usepty="true" command="@{command}"/>
+        </sequential>
+    </macrodef>
+    
+    <target name="stop">
+        <my.sshexec.usepty command="${container.stop}"/>
+    </target>
+    
+    <target name="start">
+        <my.sshexec.usepty command="${container.start}"/>
+    </target>
+    
+</project>

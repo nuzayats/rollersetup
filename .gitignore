@@ -1,0 +1,8 @@
+velocity.log
+patch.all
+*.sh
+workspace/
+classes/
+lib/
+patch/
+target/
