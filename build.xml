@@ -118,6 +118,14 @@ NOTES
     <property name="src.lib" location="./lib"/>
     <property name="src.classes" location="./classes"/>
 
+    <condition property="src.lib.exists">
+      <available file="${src.lib}" type="dir"/>
+    </condition>
+
+    <condition property="src.classes.exists">
+      <available file="${src.classes}" type="dir"/>
+    </condition>
+
     <property name="patch.dir" location="patch"/>
     <property name="patch.all" value="patch.all"/>
     
@@ -194,13 +202,13 @@ NOTES
         </artifact:mvn>
     </target>
     
-    <target name="copy.lib">
+    <target name="copy.lib" if="src.lib.exists">
         <copy todir="${target.web-inf.lib}">
             <fileset dir="${src.lib}"/>
         </copy>
     </target>
     
-    <target name="copy.classes">
+    <target name="copy.classes" if="src.classes.exists">
         <copy todir="${target.web-inf.classes}">
             <fileset dir="${src.classes}">
                 <include name="**/**"/>
